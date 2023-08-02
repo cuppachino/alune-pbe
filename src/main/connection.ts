@@ -54,7 +54,6 @@ export default class Connection {
         const res = await g({})
         if (res.ok) {
           if (this.status.value !== 'connected') {
-            // this.status.value = 'connected'
             this.#wsClient = new LcuClient(this.credentials!)
             this.#initWebSocket()
           }
