@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-background: theme(colors.stone.950);
+  }
+
+  body {
+    background-color: var(--color-background);
+  }
+}
