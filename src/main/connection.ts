@@ -5,38 +5,28 @@ import type { ConnectionStatus } from '@/types/connection-status'
 import Observable from './observable'
 
 export default class Connection {
-  credentials: Credentials | null = null
-  httpsClient: HttpsClient | null = null
-  #wsClient: LcuClient | null = null
-  constructor() {
-    this.credentials = null
-    this.httpsClient = null
-    this.#wsClient = null
-  }
-
-  get lcuWsClient() {
-    return this.#wsClient
-  }
-
   status = new Observable<ConnectionStatus>('disconnected')
+  credentials: Credentials | null = null
+  https: HttpsClient | null = null
+  ws: LcuClient | null = null
 
   update(credentials?: Credentials) {
     if (credentials) {
       this.status.value = 'connecting'
       this.credentials = credentials
-      this.httpsClient = new HttpsClient(credentials)
+      this.https = new HttpsClient(credentials)
       this.#heartbeat()
     } else {
       this.status.value = 'disconnected'
       this.credentials = null
-      this.httpsClient = null
-      this.#wsClient = null
+      this.https = null
+      this.ws = null
     }
   }
 
   async connect() {
     try {
-      const credentials = await retryUntilOk(authenticate)
+      const credentials = await retryUntilOk(() => authenticate())
       this.update(credentials)
     } catch (e) {
       logger.error(e)
@@ -44,33 +34,33 @@ export default class Connection {
   }
 
   #heartbeatInterval: NodeJS.Timeout | null = null
-  #heartbeat = () => {
+  #heartbeatReset() {
     if (this.#heartbeatInterval) clearInterval(this.#heartbeatInterval)
+  }
+  #heartbeat() {
+    this.#heartbeatReset()
     this.#heartbeatInterval = setInterval(async () => {
       try {
-        const g = this.httpsClient!.build('/lol-summoner/v1/current-summoner')
+        const { ok } = await this.https!.build('/lol-summoner/v1/current-summoner')
           .method('get')
-          .create()
-        const res = await g({})
-        if (res.ok) {
-          if (this.status.value !== 'connected') {
-            this.#wsClient = new LcuClient(this.credentials!)
-            this.#initWebSocket()
-          }
-        } else {
-          clearInterval(this.#heartbeatInterval!)
+          .create()({})
+        if (!ok) {
+          this.#heartbeatReset()
           this.update()
+        } else if (this.status.value !== 'connected') {
+          this.ws = new LcuClient(this.credentials!)
+          this.#initWebSocket()
         }
       } catch (e) {
-        clearInterval(this.#heartbeatInterval!)
+        this.#heartbeatReset()
         this.update()
       }
     }, 1000)
   }
 
-  #initWebSocket = () => {
-    if (!this.#wsClient) return
-    this.#wsClient
+  #initWebSocket() {
+    if (!this.ws) return
+    this.ws
       .on('open', () => {
         this.status.value = 'connected'
         if (this.#heartbeatInterval) {
@@ -80,6 +70,43 @@ export default class Connection {
       .on('close', () => {
         this.update()
       })
+  }
+
+  #autoTimeout: NodeJS.Timeout | null = null
+  /**
+   * Delayed connection attempt. This will wait for the specified number of milliseconds before attempting to connect to the League Client.
+   * @param ms The number of milliseconds to wait before attempting to reconnect.
+   * @returns `this`
+   */
+  reconnect(ms = 2000) {
+    this.#autoTimeout = setTimeout(() => {
+      this.connect()
+      clearTimeout(this.#autoTimeout!)
+    }, ms)
+    return this
+  }
+
+  #isOk(): this is Connection & {
+    ws: NonNullable<Connection['ws']>
+    https: NonNullable<Connection['https']>
+  } {
+    return !!this.ws && !!this.https && this.credentials !== null
+  }
+  /**
+   * Check if the connection is ready to be used. This narrows the type of `this` to `Connection & { ws: LcuClient, https: HttpsClient }` using an "is" type predicate.
+   * @returns `this` if the connection is ready to be used, otherwise `undefined`.
+   * @example
+   * if (client.ok()) {
+   *   const unsub = client.ws.subscribe('OnJsonApiEvent_lol-champ-select_v1_session', handleChampSelect)
+   * }
+   * @example
+   * currentSummoner = client.ok()?.https.build('/lol-summoner/v1/current-summoner').method('get').create()({})
+   */
+  ok() {
+    if (this.#isOk()) {
+      return this
+    }
+    return undefined
   }
 }
 

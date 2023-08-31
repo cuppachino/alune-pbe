@@ -22,17 +22,23 @@
   "dependencies": {
     "@electron-toolkit/preload": "^2.0.0",
     "@electron-toolkit/utils": "^1.0.2",
+    "@tanstack/react-router": "0.0.1-beta.147",
     "bullmq": "^4.6.3",
+    "deep-object-diff": "^1.1.9",
+    "electron-bounds": "^1.0.2",
     "electron-store": "^8.1.0",
     "electron-updater": "^5.3.0",
-    "hexgate": "^0.7.7",
+    "hexgate": "^0.9.2",
     "js-yaml": "^4.1.0",
     "pino": "^8.14.2",
     "ws": "^8.13.0"
   },
   "devDependencies": {
+    "@cuppachino/openapi-fetch": "^2.1.2",
+    "@cuppachino/type-space": "^2.0.1",
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@electron/notarize": "^1.2.3",
+    "@total-typescript/ts-reset": "^0.5.1",
     "@types/js-yaml": "^4.0.5",
     "@types/node": "^18.16.19",
     "@types/react": "^18.2.14",
@@ -54,7 +60,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tailwindcss": "^3.3.3",
-    "typescript": "^5.1.6",
+    "typescript": "^5.2.2",
     "vite": "^4.4.2"
   }
 }

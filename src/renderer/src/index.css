@@ -5,9 +5,17 @@
 @layer base {
   :root {
     --color-background: theme(colors.stone.950);
+    --color-text: theme(colors.stone.100);
   }
 
   body {
     background-color: var(--color-background);
+    color: var(--color-text);
+  }
+}
+
+@layer utilities {
+  .grid-fr {
+    grid-template-columns: 1fr 1fr;
   }
 }
