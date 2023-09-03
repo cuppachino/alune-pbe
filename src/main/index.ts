@@ -1,132 +1,97 @@
-import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { BrowserWindow, app, shell } from 'electron'
+import { electronApp, is, optimizer, platform } from '@electron-toolkit/utils'
+import { BrowserWindow, app, nativeImage, shell } from 'electron'
+// import { watchWindowBounds } from 'electron-bounds'
 import { join } from 'path'
-import icon from '../../resources/icon.png?asset'
-import { watchWindowBounds } from 'electron-bounds'
-
-import { OperationResponses, type LcuComponents } from 'hexgate'
-type LcuEventType = 'Create' | 'Update' | 'Delete'
-type LolChampSelectChampSelectSession = LcuComponents['schemas']['LolChampSelectChampSelectSession']
-let latestSession: LolChampSelectChampSelectSession | null = null
-const handleChampSelect = ({ data }: { data: LolChampSelectChampSelectSession }) => {
-  latestSession = data
-  emit('champ-select', latestSession)
-}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const emit = (channel: string, ...args: any[]) =>
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(channel, ...args))
 
-import { logger } from './logger'
 import { Connection } from 'hexgate'
-import { updatedDiff } from 'deep-object-diff'
 
-type ArrayItem<T extends any[]> = T[number]
+import { champSelectLogger, connectionLogger, httpsLogger, wsLogger } from './logger'
 
-export type ChampionMinimal = NonNullable<
-  ArrayItem<OperationResponses<'GetLolChampionsV1OwnedChampionsMinimal'>>
->
+const HTTPS_PORT = Number(process.env['MAIN_VITE_HTTPS_PORT'] || 4103)
+const WEBSOCKET_PORT = Number(process.env['MAIN_VITE_WS_PORT'] || 4104)
 
-let prevMyTeam: {
-  cellIndex: number | undefined
-  team: number | undefined
-  championPickIntent: number | undefined
-  championId: number
-  championName: string
-  img: string
-}[] = []
+import express from 'express'
+const expressApp = express()
 
-type Team = Player[]
+expressApp.use(express.static(join(__dirname, '../renderer')))
+expressApp.get('*', (_req, res) => {
+  res.sendFile(join(__dirname, '../renderer/index.html'))
+})
 
-let myTeamplayerNames: string[] = []
-const theirTeamplayerNames: string[] = []
+expressApp.listen(HTTPS_PORT, () => {
+  httpsLogger.info(HTTPS_PORT, `listening on env ws port.`)
+})
 
-class ChampSelect {
-  private prevState: Omit<LolChampSelectChampSelectSession, 'timer'> = {}
-  private myTeam: null | Team = null
-  private theirTeam: null | Team = null
+// WebSocket Server
+import { WebSocketServer } from 'ws'
 
-  private championLookup: Awaited<
-    ReturnType<NonNullable<(typeof client)['recipe']>['roster']>
-  > | null = null
-  private nameLookup: Record<number, string> = {}
+const wss = new WebSocketServer({ port: WEBSOCKET_PORT })
+wsLogger.info(WEBSOCKET_PORT, 'listening on env ws port.')
 
-  constructor(public recipe: NonNullable<(typeof client)['recipe']>) {}
-
-  async handleEventType(data: LolChampSelectChampSelectSession, eventType: LcuEventType) {
-    if (eventType === 'Delete') {
-      logger.info({ eventType }, 'event')
-      prevMyTeam = []
-      myTeamplayerNames = []
-    }
-    if (eventType === 'Create') {
-      logger.info({ eventType }, 'event')
-      this.nameLookup = Object.fromEntries(
-        (
-          await this.recipe.getSummonersById(
-            [...data.myTeam!, ...data.theirTeam!].map((p) => p.summonerId).filter(Boolean)
+wss.on('connection', function connection(ws) {
+  wsLogger.debug('a user connected')
+  ws.on('error', wsLogger.error)
+  ws.on('message', function message(data) {
+    try {
+      const [msg] = JSON.parse(data.toString()) as [keyof AluneEventMap]
+      wsLogger.debug(msg, 'recieved message')
+      switch (msg) {
+        case 'get-status':
+          ws.send(JSON.stringify(['get-status', client.status.value]))
+          break
+        case 'champ-select':
+          ws.send(
+            JSON.stringify(['champ-select', champSelect.current ?? { myTeam: [], theirTeam: [] }])
           )
-        ).data.map(({ displayName, summonerId }) => [summonerId, displayName])
-      ) as Record<number, string>
-    }
-  }
-
-  async mapTeam(team: LcuComponents['schemas']['LolChampSelectChampSelectPlayerSelection'][]) {
-    if (this.championLookup === null) {
-      this.championLookup = await this.recipe.roster()
-    }
-
-    return team.map((p): Player => {
-      const champ = this.recipe.util.champById(p.championId ?? 0, this.championLookup!)
-      const id = champ?.id ?? -1
-      const noSelectionImg = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/-1.png`
-      const img = champ?.id
-        ? `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id}/${id}000.jpg`
-        : noSelectionImg
-
-      return {
-        index: p.cellId!,
-        championName: champ?.name ?? '',
-        displayName: p.summonerId ? this.nameLookup[p.summonerId] : p.assignedPosition ?? 'TODO',
-        img,
-        teamId: p.team!
+          break
       }
-    })
-  }
-
-  shouldUpdate = ({ timer, ...data }: LolChampSelectChampSelectSession) => {
-    const diff = updatedDiff(this.prevState, data)
-    const shouldUpdate = Object.keys(diff).length > 0
-    if (shouldUpdate) logger.debug({ diff }, 'champ select session diff')
-    return shouldUpdate
-  }
-
-  public handleChampSelect = async ({
-    data,
-    eventType
-  }: {
-    data: LolChampSelectChampSelectSession
-    eventType: LcuEventType
-  }) => {
-    this.handleEventType(data, eventType)
-
-    if (this.shouldUpdate(data)) {
-      const myTeam = await this.mapTeam(data.myTeam ?? [])
-      const theirTeam = await this.mapTeam(data.theirTeam ?? [])
-      emit('champ-select', { myTeam, theirTeam })
-      this.myTeam = myTeam
-      this.theirTeam = theirTeam
+    } catch (err) {
+      wsLogger.error(err)
     }
-    this.prevState = data
+  })
+
+  ws.send(JSON.stringify(['get-status', client.status.value]))
+})
+
+/// Champion Select Session
+import { ChampionSelect } from './champion-select'
+const champSelect = new ChampionSelect({
+  logger: champSelectLogger,
+  onUpdate(session) {
+    wss.clients.forEach((client) => client.send(JSON.stringify(['champ-select', session])))
   }
-}
+})
 
 /// Client Connection
 const client = new Connection({
-  logger,
+  logger: connectionLogger,
   createRecipe({ build, wrap, unwrap }) {
     const to = unwrap('should never error!')
     return {
+      create: {
+        SummonerLookup: wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
+          from(...summonerIds: (string | number)[][] | (string | number)[]) {
+            return [
+              {
+                ids: JSON.stringify(summonerIds.flat())
+              }
+            ]
+          },
+          async to(res) {
+            return Object.fromEntries(
+              (await res).data.map(
+                ({ displayName, summonerId }) => [summonerId!, displayName!] as const
+              )
+            ) as {
+              [summonerId: number]: string
+            }
+          }
+        })
+      },
       util: {
         filterOwned(champions: ChampionMinimal[]) {
           return champions.filter((c) => !!c.ownership?.owned)
@@ -150,12 +115,24 @@ const client = new Connection({
             init
           ]
         }
+      }),
+      postLobby: wrap(build('/lol-lobby/v2/lobby').method('post').create())({
+        from() {
+          // todo !!
+          return [
+            {
+              queueId: 400
+            }
+          ]
+        }
       })
     }
   },
   interval: 2000,
   onStatusChange(status) {
+    champSelect.update(client.https)
     emit('status', status)
+    wss.clients.forEach((c) => c.send(JSON.stringify(['get-status', client.status.value])))
     client.logger.info({ status }, 'client status changed')
   },
   async onConnect(con) {
@@ -169,56 +146,6 @@ const client = new Connection({
       `Welcome, ${displayName}`
     )
 
-    // const champions = await con.recipe.roster()
-    // const ownedChampion = con.recipe.util.filterOwned(champions)
-    // con.logger.info(`Total champions: ${champions.length}. Owned: ${ownedChampion.length}`)
-
-    // const handleChampSelect = async ({
-    //   data,
-    //   eventType
-    // }: {
-    //   data: LolChampSelectChampSelectSession
-    //   eventType: LcuEventType
-    // }) => {
-    //   if (eventType === 'Delete') {
-    //     con.logger.info({ eventType }, 'event')
-    //     prevMyTeam = []
-    //     myTeamplayerNames = []
-    //   }
-    //   if (eventType === 'Create') {
-    //     const myTeam = await con.recipe.getSummonersById(
-    //       data.myTeam!.map((p) => p.summonerId).filter(Boolean)
-    //     )
-    //     con.logger.info({ eventType, myTeam }, 'event')
-    //   }
-    //   // latestSession = data
-    //   const myTeamChamps =
-    //     data.myTeam?.map((p) => {
-    //       const champ = con.recipe.util.champById(p.championId ?? 0, champions)
-    //       const id = champ?.id ?? -1
-    //       const noSelectionImg = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/-1.png`
-    //       const img = champ?.id
-    //         ? `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id}/${id}000.jpg`
-    //         : noSelectionImg
-    //       return {
-    //         cellIndex: p.cellId,
-    //         team: p.team,
-    //         championPickIntent: p.championPickIntent,
-    //         championId: p.championId || -1,
-    //         championName: champ?.name ?? '',
-    //         img,
-    //         sum: p.summonerId
-    //       }
-    //     }) ?? []
-
-    //   const diff = Object.entries(updatedDiff(prevMyTeam, myTeamChamps)).map(([_k, v]) => v)
-    //   if (diff.length > 0) {
-    //     emit('champ-select', myTeamChamps)
-    //   }
-    //   prevMyTeam = myTeamChamps
-    // }
-
-    const champSelect = new ChampSelect(con.recipe)
     con.ws.subscribe('OnJsonApiEvent_lol-champ-select_v1_session', champSelect.handleChampSelect)
 
     const summoners = await con.recipe.getSummonersById([summonerId!])
@@ -230,18 +157,30 @@ const client = new Connection({
   }
 })
 
+client.connect()
+
 // /lol-game-data/assets/v1/champion-icons/777.png
 
-client.connect()
+const TITLE_BAR_HEIGHT = 32
+
+import { AluneEventMap } from '@/types/alune-events'
+import { ChampionMinimal } from '@/types/dto'
+import { MicaBrowserWindow } from 'mica-electron'
 
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+  const mainWindow = new MicaBrowserWindow({
+    width: 1280,
+    height: 720 + TITLE_BAR_HEIGHT,
     show: false,
+    transparent: true,
+    // backgroundColor: '#20202000',
+    // frame: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    // backgroundMaterial: 'mica',
+    title: 'Alune',
+    icon: nativeImage.createFromPath(join(__dirname, '../../resources/icon.png')),
+    // titleBarStyle: platform.isWindows ? 'hidden' : 'hiddenInset',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -249,34 +188,41 @@ function createWindow(): void {
   })
 
   // Watch for window resize and save the bounds.
-  watchWindowBounds(mainWindow)
-
   mainWindow.on('ready-to-show', () => {
+    if (platform.isWindows) {
+      mainWindow.setDarkTheme()
+      mainWindow.setMicaEffect()
+    }
+
+    // watchWindowBounds(mainWindow)
+
     mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    const { url } = details
+    if (url.endsWith('/web')) {
+      console.warn(details, "opening a new window ending with '/web'")
+      shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
-
-  // Create a new view
-  /* const view = new BrowserView()
-  mainWindow.setBrowserView(view)
-  view.setAutoResize({
-    width: true,
-    height: true
-  }) */
 
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/admin')
     // view.webContents.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadURL(`http://localhost:${HTTPS_PORT}`)
+    // mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
     // view.webContents.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // redirect to the admin page
+  mainWindow.webContents.once('did-finish-load', () => {
+    mainWindow.webContents.send('redirect', '/admin')
+  })
 }
 
 app.whenReady().then(() => {
@@ -301,12 +247,7 @@ app.on('window-all-closed', () => {
 
 /// IPC
 import { ipcMain } from 'electron'
-import { Player } from '@/types/champion-select'
 
-ipcMain.handle('get-status', () => {
-  return client.status.value
-})
-
-ipcMain.handle('champ-select', () => {
-  return prevMyTeam
+ipcMain.on('post-lobby', () => {
+  client.ok()?.recipe.postLobby()
 })

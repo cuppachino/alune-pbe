@@ -1,13 +1,8 @@
-import { Link, Outlet } from '@tanstack/react-router'
-
+import { Outlet } from '@tanstack/react-router'
 export default function RootView() {
   return (
-    <>
-      <div>
-        <Link to="/">Home</Link>
-      </div>
-      <hr />
+    <div className="absolute inset-0 text-stone-950 dark:text-stone-100">
       <Outlet />
-    </>
+    </div>
   )
 }

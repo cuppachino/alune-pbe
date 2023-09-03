@@ -1,6 +1,8 @@
+import { assertElectron } from '@renderer/admin/assert-electron'
 import { useState } from 'react'
 
 function Versions(): JSX.Element {
+  assertElectron(window)
   const [versions] = useState(window.electron.process.versions)
 
   return (

@@ -5,12 +5,33 @@
 @layer base {
   :root {
     --color-background: theme(colors.stone.950);
-    --color-text: theme(colors.stone.100);
+    --color-text-primary: theme(colors.stone.100);
   }
 
   body {
-    background-color: var(--color-background);
-    color: var(--color-text);
+    /* background-color: var(--color-background); */
+    color: var(--color-text-primary);
+  }
+}
+
+a,
+button,
+input,
+textarea,
+select {
+  @apply focus:outline focus:outline-stone-300;
+}
+
+@layer components {
+  .nav-btn {
+    @apply p-2 rounded leading-normal text-sm select-none;
+  }
+  .nav-btn-active {
+    @apply bg-[#4d4d4d]/50;
+  }
+
+  .win-btn {
+    @apply inline-flex flex-col items-center shrink-0 h-8 py-1 px-3 min-w-[118px] rounded justify-center border border-[#313131] bg-[#292929] shadow hover:brightness-125 transition-all focus:outline-none outline-none focus:ring-1;
   }
 }
 
@@ -18,4 +39,21 @@
   .grid-fr {
     grid-template-columns: 1fr 1fr;
   }
+
+  .titlebar {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-app-region: drag;
+  }
+  .titlebar-button {
+    -webkit-app-region: no-drag;
+  }
+}
+
+h1 {
+  /* Display */
+  font-size: 68px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 92px; /* 135.294% */
 }

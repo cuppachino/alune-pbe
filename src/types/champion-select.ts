@@ -5,3 +5,8 @@ export interface Player {
   index: number
   teamId: number
 }
+
+export type ChampionSelectSession = {
+  myTeam: Player[] | null
+  theirTeam: Player[] | null
+}
