@@ -1,37 +1,28 @@
+import { champSelectLogger, connectionLogger, httpsLogger, wsLogger } from './logger'
 import { electronApp, is, optimizer, platform } from '@electron-toolkit/utils'
 import { BrowserWindow, app, nativeImage, shell } from 'electron'
-// import { watchWindowBounds } from 'electron-bounds'
 import { join } from 'path'
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const emit = (channel: string, ...args: any[]) =>
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(channel, ...args))
 
-import { Connection } from 'hexgate'
-
-import { champSelectLogger, connectionLogger, httpsLogger, wsLogger } from './logger'
-
-const HTTPS_PORT = Number(process.env['MAIN_VITE_HTTPS_PORT'] || 4103)
-const WEBSOCKET_PORT = Number(process.env['MAIN_VITE_WS_PORT'] || 4104)
-
+/// Https Server
 import express from 'express'
 const expressApp = express()
-
+const HTTPS_PORT = Number(process.env['MAIN_VITE_HTTPS_PORT'] || 4103)
 expressApp.use(express.static(join(__dirname, '../renderer')))
 expressApp.get('*', (_req, res) => {
   res.sendFile(join(__dirname, '../renderer/index.html'))
 })
-
 expressApp.listen(HTTPS_PORT, () => {
   httpsLogger.info(HTTPS_PORT, `listening on env ws port.`)
 })
 
 // WebSocket Server
 import { WebSocketServer } from 'ws'
-
+const WEBSOCKET_PORT = Number(process.env['MAIN_VITE_WS_PORT'] || 4104)
 const wss = new WebSocketServer({ port: WEBSOCKET_PORT })
 wsLogger.info(WEBSOCKET_PORT, 'listening on env ws port.')
-
 wss.on('connection', function connection(ws) {
   wsLogger.debug('a user connected')
   ws.on('error', wsLogger.error)
@@ -59,7 +50,6 @@ wss.on('connection', function connection(ws) {
 
 /// Champion Lookup
 import { ChampionLookup } from './champion-lookup'
-
 const championLookup = new ChampionLookup()
 
 /// Champion Select Session
@@ -73,6 +63,8 @@ const champSelect = new ChampionSelect({
 })
 
 /// Client Connection
+import { Connection } from 'hexgate'
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const client = new Connection({
   logger: connectionLogger,
   createRecipe({ build, wrap, to, unwrap }) {
@@ -134,8 +126,7 @@ const client = new Connection({
 
 client.connect()
 
-// /lol-game-data/assets/v1/champion-icons/777.png
-
+/// Electron
 const TITLE_BAR_HEIGHT = 32
 
 import { AluneEventMap } from '@/types/alune-events'
