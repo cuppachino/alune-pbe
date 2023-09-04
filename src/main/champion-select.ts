@@ -1,53 +1,36 @@
-/* eslint-disable @typescript-eslint/no-empty-interface */
 import { ChampionSelectSession, Player } from '@/types/champion-select'
 import { updatedDiff } from 'deep-object-diff'
 import {
-  LcuEventType,
   BaseLogger,
-  LcuComponents,
-  OperationResponses,
-  createRecipe,
-  ResolveLogger,
-  extractDefined,
+  CreateWithRecipe,
   Hexgate as HttpsClient,
-  RecipeFn
+  LcuComponents,
+  LcuEventType,
+  ResolveLogger,
+  extractDefined
 } from 'hexgate'
+import { ChampionLookup } from './champion-lookup'
 
-type _LolChampSelectSession = LcuComponents['schemas']['LolChampSelectChampSelectSession']
+/**
+ * A champion select session. This represents the state of champion select.
+ */
 export interface LolChampSelectSession extends _LolChampSelectSession {}
+type _LolChampSelectSession = LcuComponents['schemas']['LolChampSelectChampSelectSession']
 
+/**
+ * Alune player selection in `LolChampSelectSession`. This represents each player's selection state during champion select.
+ */
+export interface LolChampSelectPlayerSelection extends _LolChampSelectPlayerSelection {}
 type _LolChampSelectPlayerSelection =
   LcuComponents['schemas']['LolChampSelectChampSelectPlayerSelection']
-export interface LolChampSelectPlayerSelection extends _LolChampSelectPlayerSelection {}
 
-export interface LolOwnedChampionsMinimal
-  extends OperationResponses<'GetLolChampionsV1OwnedChampionsMinimal'> {}
-
-export type ChampSelectUtils = ReturnType<typeof createChampSelectUtils>
-export const createChampSelectUtils = createRecipe(({ build, wrap, unwrap }) => ({
-  championLookup: wrap(build('/lol-champions/v1/owned-champions-minimal').method('get').create())({
-    from() {
-      return [{}]
-    },
-    to: unwrap('should never error!')<LolOwnedChampionsMinimal>
-  }),
-  summonerLookup: wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
-    from(...summonerIds: number[] | number[][]) {
-      return [
-        {
-          ids: JSON.stringify(summonerIds.flat())
-        }
-      ]
-    },
-    async to(res) {
-      return Object.fromEntries(
-        (await res).data.map(({ displayName, summonerId }) => [summonerId!, displayName!] as const)
-      ) as {
-        [summonerId: number]: string
-      }
-    }
-  })
-}))
+/**
+ * A champion data type.
+ */
+export type LolCollectionsChampion = {
+  default: LcuComponents['schemas']['LolChampionsCollectionsChampion']
+  minimal: LcuComponents['schemas']['LolChampionsCollectionsChampionMinimal']
+}
 
 export interface ChampionSelectConfig<Logger extends BaseLogger | undefined> {
   onUpdate: (session: LolChampSelectSession) => void
@@ -65,86 +48,56 @@ export interface SafeChampSelect<Logger extends BaseLogger | undefined>
   utils: NonNullable<ChampionSelect<Logger>['utils']>
 }
 
-interface UpdatesWithHttpsClient<T> {
-  update(httpsClient: HttpsClient | null): void
-  isOk(): this is this & T
-  ok(): (this & this & T) | undefined
-}
-
-interface SafeLcuValue<T> extends LcuValue<T> {
-  value: NonNullable<LcuValue<T>['value']>
-}
-
-class LcuValue<T> implements UpdatesWithHttpsClient<SafeLcuValue<T>> {
-  constructor(protected recipe: RecipeFn<() => Promise<T>>) {}
-
-  value: T | null = null
-
-  async update(httpsClient: HttpsClient | null): Promise<void> {
-    if (httpsClient === null) {
-      this.value = null
-    } else {
-      const value = await this.recipe(httpsClient)()
-      this.value = value
-    }
-  }
-
-  isOk(): this is this & SafeLcuValue<T> {
-    return this.value !== null
-  }
-
-  ok(): (this & SafeLcuValue<T>) | undefined {
-    if (this.isOk()) {
-      return this
-    }
-    return undefined
-  }
-}
-
-class ChampionLookup extends LcuValue<LolOwnedChampionsMinimal> {
-  constructor() {
-    super(
-      createRecipe(({ build, wrap, unwrap }) =>
-        wrap(build('/lol-champions/v1/owned-champions-minimal').method('get').create())({
-          from() {
-            return [{}]
-          },
-          to: unwrap('should never error!')<LolOwnedChampionsMinimal>
-        })
-      )
-    )
-  }
-
-  championById(id: string | number | undefined) {
-    return this.value?.find((c) => c.id === Number(id ?? 0))
-  }
-}
-
-export class ChampionSelect<Logger extends BaseLogger | undefined> {
+export class ChampionSelect<Logger extends BaseLogger | undefined> extends CreateWithRecipe<{
+  [summonerId: number]: string
+}> {
   protected onUpdate: ((session: ChampionSelectSession) => void) | null = null
   protected prev: Omit<LolChampSelectSession, 'timer'> = {}
   current: ChampionSelectSession | null = null
-  utils: ChampSelectUtils | null = null
   protected championLookup!: ChampionLookup
   protected summonerLookup: Record<number, string> = {}
   logger = console as ResolveLogger<Logger>
+  utils: {
+    getSummoners: (...summonerIds: number[] | number[][]) => Promise<Record<number, string>>
+  } | null = null
 
   constructor(options?: Partial<ChampionSelectConfig<Logger>>) {
+    super(({ build, wrap }) =>
+      wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
+        from(...summonerIds: number[] | number[][]) {
+          return [
+            {
+              ids: JSON.stringify(summonerIds.flat())
+            }
+          ]
+        },
+        async to(res) {
+          return Object.fromEntries(
+            (await res).data.map(
+              ({ displayName, summonerId }) => [summonerId!, displayName!] as const
+            )
+          ) as {
+            [summonerId: number]: string
+          }
+        }
+      })
+    )
+
     Object.assign(this, extractDefined(options))
     if (!options?.championLookup) {
       this.championLookup = new ChampionLookup()
     }
   }
 
-  update(httpsClient: HttpsClient | null) {
-    this.championLookup.update(httpsClient)
-    if (httpsClient === null) {
-      this.utils = null
-      // this.championLookup = null
-      this.summonerLookup = {}
-      return
+  async update(httpsClient: HttpsClient | null) {
+    await this.championLookup.update(httpsClient)
+    if (httpsClient) {
+      this.utils = {
+        getSummoners: this.recipe(httpsClient)
+      }
     } else {
-      this.utils = createChampSelectUtils(httpsClient)
+      this.utils = null
+      this.summonerLookup = {}
     }
   }
 
@@ -177,7 +130,7 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> {
     }
     if (eventType === 'Create') {
       this.logger.debug({ eventType }, 'building summoner lookup')
-      this.summonerLookup = await this.utils.summonerLookup(
+      this.summonerLookup = await this.utils.getSummoners(
         this.extractSummonerIds(data.myTeam),
         this.extractSummonerIds(data.theirTeam)
       )

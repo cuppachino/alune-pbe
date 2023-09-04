@@ -57,10 +57,16 @@ wss.on('connection', function connection(ws) {
   ws.send(JSON.stringify(['get-status', client.status.value]))
 })
 
+/// Champion Lookup
+import { ChampionLookup } from './champion-lookup'
+
+const championLookup = new ChampionLookup()
+
 /// Champion Select Session
 import { ChampionSelect } from './champion-select'
 const champSelect = new ChampionSelect({
   logger: champSelectLogger,
+  championLookup,
   onUpdate(session) {
     wss.clients.forEach((client) => client.send(JSON.stringify(['champ-select', session])))
   }
@@ -69,52 +75,18 @@ const champSelect = new ChampionSelect({
 /// Client Connection
 const client = new Connection({
   logger: connectionLogger,
-  createRecipe({ build, wrap, unwrap }) {
-    const to = unwrap('should never error!')
+  createRecipe({ build, wrap, to, unwrap }) {
     return {
-      create: {
-        SummonerLookup: wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
-          from(...summonerIds: (string | number)[][] | (string | number)[]) {
-            return [
-              {
-                ids: JSON.stringify(summonerIds.flat())
-              }
-            ]
-          },
-          async to(res) {
-            return Object.fromEntries(
-              (await res).data.map(
-                ({ displayName, summonerId }) => [summonerId!, displayName!] as const
-              )
-            ) as {
-              [summonerId: number]: string
-            }
-          }
-        })
-      },
-      util: {
-        filterOwned(champions: ChampionMinimal[]) {
-          return champions.filter((c) => !!c.ownership?.owned)
-        },
-        champById(id: string | number, roster: ChampionMinimal[]) {
-          return roster.find((c) => c.id === Number(id))
-        }
-      },
-      roster: wrap(build('/lol-champions/v1/owned-champions-minimal').method('get').create())({
-        to
-      }),
-      getCurrentSummoner: wrap(build('/lol-summoner/v1/current-summoner').method('get').create())({
-        to
-      }),
+      getCurrentSummoner: unwrap(build('/lol-summoner/v1/current-summoner').method('get').create()),
       getSummonersById: wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
-        from(summonerIds: (string | number)[], init?) {
+        from(summonerIds: (string | number)[]) {
           return [
             {
               ids: JSON.stringify(summonerIds)
-            },
-            init
+            }
           ]
-        }
+        },
+        to
       }),
       postLobby: wrap(build('/lol-lobby/v2/lobby').method('post').create())({
         from() {
@@ -150,6 +122,9 @@ const client = new Connection({
 
     const summoners = await con.recipe.getSummonersById([summonerId!])
     con.logger.info(summoners, 'summoners from ids')
+
+    await championLookup.update(con.https)
+    con.logger.info(championLookup.ok()?.championById(1), 'champion by id 1')
   },
   async onDisconnect(discon) {
     await sleep(2000)
@@ -164,7 +139,6 @@ client.connect()
 const TITLE_BAR_HEIGHT = 32
 
 import { AluneEventMap } from '@/types/alune-events'
-import { ChampionMinimal } from '@/types/dto'
 import { MicaBrowserWindow } from 'mica-electron'
 
 function createWindow(): void {
