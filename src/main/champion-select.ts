@@ -53,6 +53,7 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
 }> {
   protected onUpdate: ((session: ChampionSelectSession) => void) | null = null
   protected prev: Omit<LolChampSelectSession, 'timer'> = {}
+  inChampSelect: boolean = false
   current: ChampionSelectSession | null = null
   protected championLookup!: ChampionLookup
   protected summonerLookup: Record<number, string> = {}
@@ -87,9 +88,18 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
     if (!options?.championLookup) {
       this.championLookup = new ChampionLookup()
     }
+    this.update = this.update.bind(this)
+    this.assertOk = this.assertOk.bind(this)
+    this.isOk = this.isOk.bind(this)
+    this.ok = this.ok.bind(this)
+    this.handleEventType = this.handleEventType.bind(this)
+    this.shouldUpdate = this.shouldUpdate.bind(this)
+    this.handleChampSelect = this.handleChampSelect.bind(this)
+    this.extractSummonerIds = this.extractSummonerIds.bind(this)
   }
 
   async update(httpsClient: HttpsClient | null) {
+    this.inChampSelect = false
     await this.championLookup.update(httpsClient)
     if (httpsClient) {
       this.utils = {
@@ -126,9 +136,11 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
   protected async handleEventType(data: LolChampSelectSession, eventType: LcuEventType) {
     this.assertOk()
     if (eventType === 'Delete') {
+      this.inChampSelect = false
       this.logger.debug({ eventType }, 'event')
     }
     if (eventType === 'Create') {
+      this.inChampSelect = true
       this.logger.debug({ eventType }, 'building summoner lookup')
       this.summonerLookup = await this.utils.getSummoners(
         this.extractSummonerIds(data.myTeam),
@@ -142,27 +154,23 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
     team: LcuComponents['schemas']['LolChampSelectChampSelectPlayerSelection'][]
   ) {
     return team.map((p): Player => {
-      const champ = this.championLookup.championById(p.championId)
-      const id = champ?.id ?? -1
-      const noSelectionImg = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/-1.png`
-      const img = champ?.id
-        ? `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id}/${id}000.jpg`
-        : noSelectionImg
-
+      const { championName, splashImage: img } = this.championLookup.championById(p.championId)
+      const backupDisplayName = p.assignedPosition || 'TODO'
+      const displayName = p.summonerId
+        ? this.summonerLookup[p.summonerId] || backupDisplayName
+        : backupDisplayName
       return {
         index: p.cellId!,
-        championName: champ?.name ?? '',
-        displayName: p.summonerId
-          ? this.summonerLookup[p.summonerId]
-          : p.assignedPosition ?? 'TODO',
+        championName,
+        displayName,
         img,
-        teamId: p.team!
+        teamId: p.team ?? 0
       }
     })
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  protected shouldUpdate({ timer, ...data }: LolChampSelectSession) {
+  protected shouldUpdate = ({ timer, ...data }: LolChampSelectSession) => {
     const diff = updatedDiff(this.prev, data)
     const shouldUpdate = Object.keys(diff).length > 0
     if (shouldUpdate) this.logger.debug({ diff }, 'champ select session diff')

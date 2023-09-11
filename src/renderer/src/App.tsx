@@ -16,7 +16,6 @@ import { Outlet } from '@tanstack/react-router'
 import { TitleBar } from '@renderer/components/TitleBar'
 
 function App(): JSX.Element {
-  console.log('current location:', window.location)
   return (
     <div className="flex flex-col relative max-h-full h-full font-sans">
       <TitleBar />

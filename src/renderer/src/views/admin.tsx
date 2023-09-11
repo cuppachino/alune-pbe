@@ -1,28 +1,102 @@
 import { assertElectron } from '@renderer/admin/assert-electron'
+import { Button } from '@renderer/components/Button'
 import { Outlet } from '@tanstack/react-router'
+import { useLobbyState } from '@renderer/hooks/use-lobby-state'
+import { useState } from 'react'
 import { twMerge } from 'tailwind-merge'
 
-type AdminButtonProps = PropType<'button'>
+type LobbyKind = 'practiceTool'
 
-function AdminButton({ children, className, ...props }: AdminButtonProps) {
+const postLobby = (kind: LobbyKind) => {
+  assertElectron(window)
+  window.electron.ipcRenderer.send('post-lobby', kind)
+}
+const cycleWindow = () => {
+  assertElectron(window)
+  window.electron.ipcRenderer.send('cycle-window')
+}
+
+const startGame = (kind: LobbyKind) => {
+  assertElectron(window)
+  window.electron.ipcRenderer.send('start-game', kind)
+}
+
+function Panel({
+  title,
+  children,
+  className,
+  ...props
+}: React.PropsWithChildren<PropType<'div'> & { title: string }>) {
   return (
-    <button className={twMerge(`win-btn`, className)} {...props}>
+    <div className={twMerge('flex flex-col gap-4', className)} {...props}>
+      <h3 className="capitalize">{title}</h3>
       {children}
-    </button>
+    </div>
   )
 }
 
-const postLobby = () => {
-  assertElectron(window)
-  window.electron.ipcRenderer.send('post-lobby')
+function LobbyControls({
+  searchState,
+  canStartActivity
+}: {
+  searchState: ReturnType<typeof useLobbyState>['searchState']
+  canStartActivity: boolean
+}) {
+  const [lobbyKind, setLobbyKind] = useState<LobbyKind>('practiceTool')
+
+  return (
+    <Panel title={'lobby'} className="w-full">
+      {searchState === 'Invalid' && (
+        <>
+          <Button className="shadow-md w-full" onClick={() => postLobby(lobbyKind)}>
+            Post Lobby
+          </Button>
+          <select
+            className="block shadow-md win-btn"
+            value={lobbyKind}
+            onChange={(e) => setLobbyKind(e.target.value as LobbyKind)}
+          >
+            <option value="practiceTool">Practice Tool</option>
+            <option value="rankedSolo5v5">Ranked Solo 5v5</option>
+          </select>
+        </>
+      )}
+      {canStartActivity && (
+        <Button className="shadow-md" onClick={() => startGame(lobbyKind)}>
+          Start Game
+        </Button>
+      )}
+    </Panel>
+  )
+}
+
+function LobbyController() {
+  const { inChampSelect, canStartActivity, searchState } = useLobbyState()
+
+  return (
+    <div>
+      <div className="flex gap-4">
+        {!inChampSelect && (
+          <LobbyControls searchState={searchState} canStartActivity={canStartActivity} />
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function AdminView() {
   return (
-    <div className="h-full p-5">
-      <h1 className="text-3xl">Admin View</h1>
+    <div className="h-full px-10 py-5">
+      <h2>Admin View</h2>
       <br />
-      <AdminButton onClick={postLobby}>Post Lobby</AdminButton>
+      <div className="grid grid-flow-col items-start grid-cols-3 gap-10">
+        <LobbyController />
+        <Panel title={'window'} className="col-span-2">
+          <Button className="shadow-md" onClick={cycleWindow}>
+            Cycle Window
+          </Button>
+        </Panel>
+      </div>
       <Outlet />
     </div>
   )

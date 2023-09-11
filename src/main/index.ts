@@ -1,4 +1,4 @@
-import { champSelectLogger, connectionLogger, httpsLogger, wsLogger } from './logger'
+import { champSelectLogger, connectionLogger, httpsLogger, mainLogger, wsLogger } from './logger'
 import { electronApp, is, optimizer, platform } from '@electron-toolkit/utils'
 import { BrowserWindow, app, nativeImage, shell } from 'electron'
 import { join } from 'path'
@@ -16,6 +16,23 @@ expressApp.get('*', (_req, res) => {
 })
 expressApp.listen(HTTPS_PORT, () => {
   httpsLogger.info(HTTPS_PORT, `listening on env ws port.`)
+})
+
+import { LobbyState } from './lobby-state'
+const lobbyState = new LobbyState({
+  onUpdate(_self, state) {
+    wss.clients.forEach((c) =>
+      c.send(
+        JSON.stringify([
+          'lobby-state',
+          {
+            ...state,
+            inChampSelect: champSelect.inChampSelect
+          }
+        ])
+      )
+    )
+  }
 })
 
 // WebSocket Server
@@ -39,6 +56,26 @@ wss.on('connection', function connection(ws) {
             JSON.stringify(['champ-select', champSelect.current ?? { myTeam: [], theirTeam: [] }])
           )
           break
+        case 'preload-images':
+          poll(
+            async () => {
+              ws.send(JSON.stringify(['preload-images', championLookup.images()]))
+              return true
+            },
+            1000,
+            10
+          )
+          break
+        case 'lobby-state':
+          ws.send(
+            JSON.stringify([
+              'lobby-state',
+              {
+                ...lobbyState.data,
+                inChampSelect: champSelect.inChampSelect
+              }
+            ])
+          )
       }
     } catch (err) {
       wsLogger.error(err)
@@ -57,13 +94,14 @@ import { ChampionSelect } from './champion-select'
 const champSelect = new ChampionSelect({
   logger: champSelectLogger,
   championLookup,
-  onUpdate(session) {
+  onUpdate: (session) => {
+    champSelect.logger.info(session.myTeam, 'champ select session updated')
     wss.clients.forEach((client) => client.send(JSON.stringify(['champ-select', session])))
   }
 })
 
 /// Client Connection
-import { Connection } from 'hexgate'
+import { Connection, poll, type LobbyMatchmakingSearchState } from 'hexgate'
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const client = new Connection({
   logger: connectionLogger,
@@ -81,20 +119,22 @@ const client = new Connection({
         to
       }),
       postLobby: wrap(build('/lol-lobby/v2/lobby').method('post').create())({
-        from() {
+        from(config: LobbyConfig) {
           // todo !!
-          return [
-            {
-              queueId: 400
-            }
-          ]
+          return [config]
         }
-      })
+      }),
+      cancelLobby: build('/lol-lobby/v2/lobby').method('delete').create(),
+      startGame: build('/lol-lobby/v2/lobby/matchmaking/search').method('post').create(),
+      startCustomGame: build('/lol-lobby/v1/lobby/custom/start-champ-select')
+        .method('post')
+        .create()
     }
   },
   interval: 2000,
-  onStatusChange(status) {
-    champSelect.update(client.https)
+  async onStatusChange(status) {
+    await lobbyState.update(client.https)
+    await championLookup.update(client.https)
     emit('status', status)
     wss.clients.forEach((c) => c.send(JSON.stringify(['get-status', client.status.value])))
     client.logger.info({ status }, 'client status changed')
@@ -110,15 +150,19 @@ const client = new Connection({
       `Welcome, ${displayName}`
     )
 
-    con.ws.subscribe('OnJsonApiEvent_lol-champ-select_v1_session', champSelect.handleChampSelect)
-
     const summoners = await con.recipe.getSummonersById([summonerId!])
     con.logger.info(summoners, 'summoners from ids')
 
-    await championLookup.update(con.https)
-    con.logger.info(championLookup.ok()?.championById(1), 'champion by id 1')
+    await championLookup.update(client.https)
+    con.logger.info(championLookup.championById(1), 'champion by id 1')
+
+    con.ws.subscribe('OnJsonApiEvent_lol-lobby_v2_lobby', lobbyState.handleLobbyEvent)
+
+    await champSelect.update(con.https)
+    con.ws.subscribe('OnJsonApiEvent_lol-champ-select_v1_session', champSelect.handleChampSelect)
   },
   async onDisconnect(discon) {
+    await champSelect.update(null)
     await sleep(2000)
     discon.connect()
   }
@@ -139,6 +183,8 @@ function createWindow(): void {
     height: 720 + TITLE_BAR_HEIGHT,
     show: false,
     transparent: true,
+    minWidth: 460,
+    minHeight: 460,
     // backgroundColor: '#20202000',
     // frame: false,
     autoHideMenuBar: true,
@@ -212,7 +258,56 @@ app.on('window-all-closed', () => {
 
 /// IPC
 import { ipcMain } from 'electron'
+import { LobbyConfig, LobbyKind, lobbyConfig } from './lobby-config'
 
-ipcMain.on('post-lobby', () => {
-  client.ok()?.recipe.postLobby()
+const cycleBrowserWindowSize = () => {
+  let i = 0
+  const sizes = [
+    { width: 1280, height: 720 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 }
+  ]
+  return () => {
+    const { width, height } = sizes[i++ % sizes.length]!
+    BrowserWindow.getAllWindows().forEach((w) => {
+      w.setSize(width, height)
+      w.center()
+    })
+  }
+}
+
+const cycle = cycleBrowserWindowSize()
+
+ipcMain.on('cycle-window', cycle)
+
+ipcMain.on('post-lobby', async (_, lobbyKind: LobbyKind | 'cancel') => {
+  if (lobbyKind === 'cancel') {
+    const res = await client.ok()?.recipe.cancelLobby()
+    mainLogger.debug(res?.status, 'cancel-lobby')
+    return
+  }
+  if (lobbyKind in lobbyConfig) {
+    const res = await client.ok()?.recipe.postLobby(lobbyConfig[lobbyKind])
+    mainLogger.debug(res?.status, 'post-lobby')
+  } else {
+    mainLogger.error(lobbyKind, 'invalid lobby kind')
+  }
+})
+
+ipcMain.on('start-game', async (_, lobbyKind: LobbyKind) => {
+  console.log('start game', lobbyKind)
+  let res
+  if (lobbyKind === 'practiceTool') {
+    res = await client.ok()?.recipe.startCustomGame()
+  } else {
+    res = await client.ok()?.recipe.startGame()
+  }
+  console.log(res)
+  mainLogger.debug(res, 'start-game')
+})
+
+ipcMain.on('preload-images', () => {
+  const images = championLookup.images()
+  mainLogger.debug(images, 'preload images')
+  wss.clients.forEach((c) => c.send(JSON.stringify(['preload-images', images])))
 })

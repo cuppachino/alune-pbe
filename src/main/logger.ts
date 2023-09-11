@@ -1,7 +1,8 @@
 import pino from 'pino'
 
 export const mainLogger = pino({
-  name: 'main' as const
+  name: 'main' as const,
+  level: 'debug'
 })
 
 export const connectionLogger = mainLogger.child({

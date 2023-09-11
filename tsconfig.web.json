@@ -8,6 +8,7 @@
     "src/types/**/*"
   ],
   "compilerOptions": {
+    "skipLibCheck": true,
     "composite": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
