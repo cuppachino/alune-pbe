@@ -14,6 +14,7 @@ export function StatusBar({ children }: React.PropsWithChildren<{}>) {
 
 import { Outlet } from '@tanstack/react-router'
 import { TitleBar } from '@renderer/components/TitleBar'
+import { PreloadChampionSplashArt } from './hooks/use-preload-images'
 
 function App(): JSX.Element {
   return (
@@ -23,6 +24,7 @@ function App(): JSX.Element {
         <Outlet />
       </div>
       <StatusBar />
+      <PreloadChampionSplashArt hidden />
     </div>
   )
 }

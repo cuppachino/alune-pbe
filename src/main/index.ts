@@ -1,6 +1,6 @@
 import { champSelectLogger, connectionLogger, httpsLogger, mainLogger, wsLogger } from './logger'
 import { electronApp, is, optimizer, platform } from '@electron-toolkit/utils'
-import { BrowserWindow, app, nativeImage, shell } from 'electron'
+import { BrowserWindow, app, dialog, nativeImage, shell } from 'electron'
 import { join } from 'path'
 
 const emit = (channel: string, ...args: any[]) =>
@@ -35,6 +35,43 @@ const lobbyState = new LobbyState({
   }
 })
 
+// Recording
+let recordingBuffer: LolChampSelectSession[] = []
+const clearRecordingBuffer = () => {
+  recordingBuffer = []
+}
+const saveRecordingBuffer = async () => {
+  const mainWindow = BrowserWindow.getFocusedWindow()
+  const { filePath } = await dialog.showSaveDialog(mainWindow!, {
+    title: 'Save Recording',
+    defaultPath: 'recording.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  })
+
+  if (filePath) {
+    if (recordingBuffer.length > 0) {
+      const fs = await import('fs')
+      fs.writeFileSync(filePath, JSON.stringify(recordingBuffer, null, 2))
+      clearRecordingBuffer()
+      wsLogger.info('saved recording to', filePath)
+    } else {
+      wsLogger.info('did not save empty recording to', filePath)
+    }
+  } else {
+    wsLogger.info('cancelled saving recording')
+  }
+}
+let shouldRecord = false
+const setShouldRecord = (action: 'enable' | 'disable' | boolean) => {
+  if (action === 'enable') {
+    shouldRecord = true
+  } else if (action === 'disable') {
+    shouldRecord = false
+  } else {
+    shouldRecord = action
+  }
+}
+
 // WebSocket Server
 import { WebSocketServer } from 'ws'
 const WEBSOCKET_PORT = Number(process.env['MAIN_VITE_WS_PORT'] || 4104)
@@ -43,20 +80,30 @@ wsLogger.info(WEBSOCKET_PORT, 'listening on env ws port.')
 wss.on('connection', function connection(ws) {
   wsLogger.debug('a user connected')
   ws.on('error', wsLogger.error)
-  ws.on('message', function message(data) {
+  ws.on('message', async function message(data) {
     try {
       const [msg] = JSON.parse(data.toString()) as [keyof AluneEventMap]
       wsLogger.debug(msg, 'recieved message')
       switch (msg) {
-        case 'get-status':
+        case 'get-status': {
           ws.send(JSON.stringify(['get-status', client.status.value]))
           break
-        case 'champ-select':
+        }
+        case 'champ-select': {
           ws.send(
-            JSON.stringify(['champ-select', champSelect.current ?? { myTeam: [], theirTeam: [] }])
+            JSON.stringify([
+              'champ-select',
+              champSelect.current ?? {
+                myTeam: [],
+                theirTeam: [],
+                myTeamBans: [],
+                theirTeamBans: []
+              }
+            ])
           )
           break
-        case 'preload-images':
+        }
+        case 'preload-images': {
           poll(
             async () => {
               ws.send(JSON.stringify(['preload-images', championLookup.images()]))
@@ -66,16 +113,21 @@ wss.on('connection', function connection(ws) {
             10
           )
           break
-        case 'lobby-state':
+        }
+        case 'lobby-state': {
+          const state = await client.ok()?.recipe.getLobby()
           ws.send(
             JSON.stringify([
               'lobby-state',
               {
                 ...lobbyState.data,
+                canStartActivity: state?.canStartActivity ?? lobbyState.canStartActivity,
                 inChampSelect: champSelect.inChampSelect
               }
             ])
           )
+          break
+        }
       }
     } catch (err) {
       wsLogger.error(err)
@@ -90,12 +142,17 @@ import { ChampionLookup } from './champion-lookup'
 const championLookup = new ChampionLookup()
 
 /// Champion Select Session
-import { ChampionSelect } from './champion-select'
+import { ChampionSelect, LolChampSelectSession } from './champion-select'
 const champSelect = new ChampionSelect({
   logger: champSelectLogger,
   championLookup,
+  onStart: (rawSession) => {
+    champSelect.logger.info({ gameId: rawSession.gameId }, 'champ select session started')
+  },
   onUpdate: (session) => {
-    champSelect.logger.info(session.myTeam, 'champ select session updated')
+    if (shouldRecord) {
+      recordingBuffer.push(session)
+    }
     wss.clients.forEach((client) => client.send(JSON.stringify(['champ-select', session])))
   }
 })
@@ -108,16 +165,7 @@ const client = new Connection({
   createRecipe({ build, wrap, to, unwrap }) {
     return {
       getCurrentSummoner: unwrap(build('/lol-summoner/v1/current-summoner').method('get').create()),
-      getSummonersById: wrap(build('/lol-summoner/v2/summoner-names').method('get').create())({
-        from(summonerIds: (string | number)[]) {
-          return [
-            {
-              ids: JSON.stringify(summonerIds)
-            }
-          ]
-        },
-        to
-      }),
+      getLobby: unwrap(build('/lol-lobby/v2/lobby').method('get').create()),
       postLobby: wrap(build('/lol-lobby/v2/lobby').method('post').create())({
         from(config: LobbyConfig) {
           // todo !!
@@ -137,24 +185,14 @@ const client = new Connection({
     await championLookup.update(client.https)
     emit('status', status)
     wss.clients.forEach((c) => c.send(JSON.stringify(['get-status', client.status.value])))
-    client.logger.info({ status }, 'client status changed')
+    client.logger.debug({ status }, 'client status changed')
   },
   async onConnect(con) {
-    const { displayName, summonerId, accountId, puuid } = await con.recipe.getCurrentSummoner()
-    con.logger.info(
-      {
-        accountId,
-        puuid,
-        summonerId
-      },
-      `Welcome, ${displayName}`
-    )
-
-    const summoners = await con.recipe.getSummonersById([summonerId!])
-    con.logger.info(summoners, 'summoners from ids')
+    const { displayName } = await con.recipe.getCurrentSummoner()
+    con.logger.info(`Welcome, ${displayName}`)
 
     await championLookup.update(client.https)
-    con.logger.info(championLookup.championById(1), 'champion by id 1')
+    con.logger.debug(championLookup.championById(1), 'champion by id 1')
 
     con.ws.subscribe('OnJsonApiEvent_lol-lobby_v2_lobby', lobbyState.handleLobbyEvent)
 
@@ -310,4 +348,29 @@ ipcMain.on('preload-images', () => {
   const images = championLookup.images()
   mainLogger.debug(images, 'preload images')
   wss.clients.forEach((c) => c.send(JSON.stringify(['preload-images', images])))
+})
+
+ipcMain.on('recording-controller', (_, action: 'enable' | 'disable' | 'save' | 'clear') => {
+  switch (action) {
+    case 'enable': {
+      mainLogger.info('enabled recording')
+      setShouldRecord(true)
+      break
+    }
+    case 'disable': {
+      mainLogger.info('disabled recording')
+      setShouldRecord(false)
+      break
+    }
+    case 'clear': {
+      clearRecordingBuffer()
+      break
+    }
+    case 'save': {
+      saveRecordingBuffer()
+    }
+    default: {
+      mainLogger.error(action, 'invalid recording action')
+    }
+  }
 })

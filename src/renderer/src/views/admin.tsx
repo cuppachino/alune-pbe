@@ -84,13 +84,53 @@ function LobbyController() {
   )
 }
 
+function RecordingController() {
+  const [record, setRecording] = useState(false)
+  const toggle = () => {
+    setRecording((prev) => {
+      assertElectron(window)
+      window.electron.ipcRenderer.send('recording-controller', prev ? 'disable' : 'enable')
+      return !prev
+    })
+  }
+
+  return (
+    <Panel title={'recording'} className="flex">
+      <Button className="shadow-md" onClick={toggle}>
+        {record ? 'Stop Recording' : 'Start Recording'}
+      </Button>
+      <Button
+        className="shadow-md"
+        onClick={() => {
+          assertElectron(window)
+          window.electron.ipcRenderer.send('recording-controller', 'save')
+        }}
+      >
+        Save
+      </Button>
+      <Button
+        className="shadow-md"
+        onClick={() => {
+          assertElectron(window)
+          window.electron.ipcRenderer.send('recording-controller', 'clear')
+        }}
+      >
+        Clear
+      </Button>
+    </Panel>
+  )
+}
+
 export default function AdminView() {
   return (
     <div className="h-full px-10 py-5">
       <h2>Admin View</h2>
       <br />
       <div className="grid grid-flow-col items-start grid-cols-3 gap-10">
-        <LobbyController />
+        <div className="grid gap-10 col-span-1">
+          <RecordingController />
+          <LobbyController />
+        </div>
         <Panel title={'window'} className="col-span-2">
           <Button className="shadow-md" onClick={cycleWindow}>
             Cycle Window

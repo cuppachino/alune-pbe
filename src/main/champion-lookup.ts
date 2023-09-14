@@ -1,12 +1,18 @@
 import { LcuValue } from 'hexgate'
 
-export type ChampionDto = { championName: string; championId: number; splashImage: string }
+export type ChampionDto = {
+  championName: string
+  championId: number
+  splashImage: string
+  squareImage: string
+}
 
 export const DEFAULT_IMAGE = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/-1.png`
 export const NONE_CHAMPION = {
   championName: 'None',
   championId: -1,
-  splashImage: DEFAULT_IMAGE
+  splashImage: DEFAULT_IMAGE,
+  squareImage: DEFAULT_IMAGE
 }
 export class ChampionLookup extends LcuValue<Map<number, ChampionDto>> {
   constructor() {
@@ -42,7 +48,8 @@ export class ChampionLookup extends LcuValue<Map<number, ChampionDto>> {
                 {
                   championName: name!,
                   championId: id!,
-                  splashImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id!}/${id!}000.jpg`
+                  splashImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id!}/${id!}000.jpg`,
+                  squareImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/${id}.png`
                 } satisfies ChampionDto
               ] as const
             })
@@ -60,9 +67,14 @@ export class ChampionLookup extends LcuValue<Map<number, ChampionDto>> {
     if (!this.inner) {
       throw new Error('Champion lookup not initialized')
     }
-    const images: { [id: number]: string } = {}
-    this.inner?.forEach(({ splashImage, championId }) => {
-      images[championId] = splashImage
+    const images: {
+      [id: number]: {
+        splash: string
+        square: string
+      }
+    } = {}
+    this.inner?.forEach(({ championId, splashImage, squareImage }) => {
+      images[championId] = { splash: splashImage, square: squareImage }
     })
     return images
   }

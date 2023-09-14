@@ -33,7 +33,9 @@ export type LolCollectionsChampion = {
 }
 
 export interface ChampionSelectConfig<Logger extends BaseLogger | undefined> {
-  onUpdate: (session: LolChampSelectSession) => void
+  onStart: (session: LolChampSelectSession, internalMs: number) => void
+  onUpdate: (session: LolChampSelectSession, internalMs: number, elapsedMs: number) => void
+  onExit: (session: LolChampSelectSession, internalMs: number, elapsedMs: number) => void
   championLookup: ChampionLookup
   logger: Logger
 }
@@ -51,16 +53,26 @@ export interface SafeChampSelect<Logger extends BaseLogger | undefined>
 export class ChampionSelect<Logger extends BaseLogger | undefined> extends CreateWithRecipe<{
   [summonerId: number]: string
 }> {
-  protected onUpdate: ((session: ChampionSelectSession) => void) | null = null
+  protected onStart: ((rawSession: LolChampSelectSession, internalMs: number) => void) | null = null
+  protected onUpdate:
+    | ((session: ChampionSelectSession, internalMs: number, elapsedMs: number) => void)
+    | null = null
+  protected onExit:
+    | ((rawSession: LolChampSelectSession, internalMs: number, elapsedMs: number) => void)
+    | null = null
   protected prev: Omit<LolChampSelectSession, 'timer'> = {}
+
   inChampSelect: boolean = false
   current: ChampionSelectSession | null = null
+  internalMs: number = 0
+  elapsedMs: number = 0
+
   protected championLookup!: ChampionLookup
   protected summonerLookup: Record<number, string> = {}
-  logger = console as ResolveLogger<Logger>
   utils: {
     getSummoners: (...summonerIds: number[] | number[][]) => Promise<Record<number, string>>
   } | null = null
+  logger = console as ResolveLogger<Logger>
 
   constructor(options?: Partial<ChampionSelectConfig<Logger>>) {
     super(({ build, wrap }) =>
@@ -138,6 +150,8 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
     if (eventType === 'Delete') {
       this.inChampSelect = false
       this.logger.debug({ eventType }, 'event')
+      this.onExit?.(data, this.internalMs, this.elapsedMs)
+      return false
     }
     if (eventType === 'Create') {
       this.inChampSelect = true
@@ -146,7 +160,9 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
         this.extractSummonerIds(data.myTeam),
         this.extractSummonerIds(data.theirTeam)
       )
+      this.onStart?.(data, this.internalMs)
     }
+    return true
   }
 
   protected async mapTeam(
@@ -185,13 +201,26 @@ export class ChampionSelect<Logger extends BaseLogger | undefined> extends Creat
     eventType: LcuEventType
   }) => {
     this.assertOk()
-    this.handleEventType(data, eventType)
+    const newTime = data.timer?.internalNowInEpochMs!
+    const oldTime = this.internalMs
+    this.elapsedMs = newTime - oldTime
+    this.internalMs = newTime
+    let shouldContinue = await this.handleEventType(data, eventType)
 
-    if (this.shouldUpdate(data)) {
+    if (shouldContinue && this.shouldUpdate(data)) {
+      this.logger.debug({ elapsedMs: this.elapsedMs }, 'champ select elapsed time')
       const myTeam = await this.mapTeam(data.myTeam ?? [])
       const theirTeam = await this.mapTeam(data.theirTeam ?? [])
-      this.onUpdate?.({ myTeam, theirTeam })
-      this.current = { myTeam, theirTeam }
+
+      const { myTeamBans, theirTeamBans, numBans } = data.bans ?? {}
+      this.logger.warn({ numBans }, 'num bans')
+
+      this.onUpdate?.(
+        { myTeam, theirTeam, myTeamBans, theirTeamBans },
+        this.internalMs,
+        this.elapsedMs
+      )
+      this.current = { myTeam, theirTeam, myTeamBans, theirTeamBans }
     }
     this.prev = data
   }

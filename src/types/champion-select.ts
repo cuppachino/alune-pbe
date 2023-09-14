@@ -9,4 +9,6 @@ export interface Player {
 export type ChampionSelectSession = {
   myTeam: Player[] | null
   theirTeam: Player[] | null
+  myTeamBans?: number[]
+  theirTeamBans?: number[]
 }
