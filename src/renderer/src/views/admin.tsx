@@ -2,8 +2,9 @@ import { assertElectron } from '@renderer/admin/assert-electron'
 import { Button } from '@renderer/components/Button'
 import { Outlet } from '@tanstack/react-router'
 import { useLobbyState } from '@renderer/hooks/use-lobby-state'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { twMerge } from 'tailwind-merge'
+import { useRecordingSize } from '@renderer/hooks/use-recording-size'
 
 type LobbyKind = 'practiceTool'
 
@@ -84,37 +85,49 @@ function LobbyController() {
   )
 }
 
+function RecordingBufferBar() {
+  const size = useRecordingSize()
+  return (
+    <div className="w-full h-1 bg-gray-400">
+      <div className="h-full bg-green-400" style={{ width: `${size}%` }} />
+    </div>
+  )
+}
+
 function RecordingController() {
-  const [record, setRecording] = useState(false)
-  const toggle = () => {
-    setRecording((prev) => {
-      assertElectron(window)
-      window.electron.ipcRenderer.send('recording-controller', prev ? 'disable' : 'enable')
-      return !prev
-    })
+  const [isRecording, setIsRecording] = useState(false)
+
+  const toggle = useCallback(async () => {
+    assertElectron(window)
+    const res: boolean = await window.electron.ipcRenderer.invoke(
+      'recording-controller',
+      isRecording ? 'disable' : 'enable'
+    )
+    setIsRecording(res)
+  }, [isRecording])
+
+  const clear = async () => {
+    assertElectron(window)
+    const res = await window.electron.ipcRenderer.invoke('recording-controller', 'clear')
+    setIsRecording(res)
   }
 
   return (
     <Panel title={'recording'} className="flex">
+      {!!isRecording && <RecordingBufferBar />}
       <Button className="shadow-md" onClick={toggle}>
-        {record ? 'Stop Recording' : 'Start Recording'}
+        {isRecording ? 'Stop Recording' : 'Start Recording'}
       </Button>
       <Button
         className="shadow-md"
         onClick={() => {
           assertElectron(window)
-          window.electron.ipcRenderer.send('recording-controller', 'save')
+          window.electron.ipcRenderer.invoke('recording-controller', 'save')
         }}
       >
         Save
       </Button>
-      <Button
-        className="shadow-md"
-        onClick={() => {
-          assertElectron(window)
-          window.electron.ipcRenderer.send('recording-controller', 'clear')
-        }}
-      >
+      <Button className="shadow-md" onClick={clear}>
         Clear
       </Button>
     </Panel>

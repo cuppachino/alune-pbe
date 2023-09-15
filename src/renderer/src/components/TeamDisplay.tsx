@@ -19,7 +19,9 @@ export function TeamDisplay({
         }}
         key={`team-${p.teamId}-cell-${p.index}`}
       >
-        <span className="w-10 overflow-ellipsis">{p.championName}</span>
+        <span className="w-10 overflow-ellipsis lg:text-lg xl-text-xl 2xl:text-2xl">
+          {p.championName}
+        </span>
         <span className="w-10 overflow-ellipsis">{p.displayName}</span>
       </div>
     )

@@ -13,7 +13,8 @@ export type AluneEventMap = {
       searchState: LobbyMatchmakingSearchState['searchState']
     }
   ]
-  'recording-controller': ['enable' | 'disable' | 'save']
+  'is-recording': [isRecording: boolean]
+  'recording-size': [eventBufferLength: number]
 }
 
 export type AlunePayload = EventPayload<AluneEventMap>

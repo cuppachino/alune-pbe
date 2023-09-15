@@ -1,5 +1,7 @@
 # alune
 
+<img src="./screenshot.png" width="600" />
+
 An Electron application with React and TypeScript
 
 ## Recommended IDE Setup

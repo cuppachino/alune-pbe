@@ -6,9 +6,13 @@ export interface Player {
   teamId: number
 }
 
+export type Ban = { id: number; isPicking: boolean; completed: boolean }
+
 export type ChampionSelectSession = {
   myTeam: Player[] | null
   theirTeam: Player[] | null
-  myTeamBans?: number[]
-  theirTeamBans?: number[]
+  myTeamBans?: Ban[]
+  theirTeamBans?: Ban[]
+  banSize?: number
+  phase?: 'BAN_PICK' | 'FINALIZATION' | 'GAME_STARTING'
 }

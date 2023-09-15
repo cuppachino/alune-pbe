@@ -36,23 +36,31 @@ const lobbyState = new LobbyState({
 })
 
 // Recording
-let recordingBuffer: LolChampSelectSession[] = []
+import { writeFile } from 'fs/promises'
+let recordingBuffer: ChampionSelectSession[] = []
 const clearRecordingBuffer = () => {
   recordingBuffer = []
 }
 const saveRecordingBuffer = async () => {
   const mainWindow = BrowserWindow.getFocusedWindow()
-  const { filePath } = await dialog.showSaveDialog(mainWindow!, {
+  const { filePath, canceled } = await dialog.showSaveDialog(mainWindow!, {
     title: 'Save Recording',
     defaultPath: 'recording.json',
-    filters: [{ name: 'JSON', extensions: ['json'] }]
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    // @ts-expect-error electron types are wrong or i need to update electorn.
+    properties: ['promptToCreate', 'createDirectory', 'showOverwriteConfirmation']
   })
+
+  if (canceled) {
+    wsLogger.warn('cancelled saving recording')
+    return
+  }
 
   if (filePath) {
     if (recordingBuffer.length > 0) {
-      const fs = await import('fs')
-      fs.writeFileSync(filePath, JSON.stringify(recordingBuffer, null, 2))
-      clearRecordingBuffer()
+      await writeFile(filePath, JSON.stringify(recordingBuffer, null, 2)).finally(() => {
+        clearRecordingBuffer()
+      })
       wsLogger.info('saved recording to', filePath)
     } else {
       wsLogger.info('did not save empty recording to', filePath)
@@ -62,14 +70,8 @@ const saveRecordingBuffer = async () => {
   }
 }
 let shouldRecord = false
-const setShouldRecord = (action: 'enable' | 'disable' | boolean) => {
-  if (action === 'enable') {
-    shouldRecord = true
-  } else if (action === 'disable') {
-    shouldRecord = false
-  } else {
-    shouldRecord = action
-  }
+const setShouldRecord = (action: boolean) => {
+  shouldRecord = action
 }
 
 // WebSocket Server
@@ -115,17 +117,21 @@ wss.on('connection', function connection(ws) {
           break
         }
         case 'lobby-state': {
-          const state = await client.ok()?.recipe.getLobby()
+          // const state = await client.ok()?.recipe.getLobby()
           ws.send(
             JSON.stringify([
               'lobby-state',
               {
                 ...lobbyState.data,
-                canStartActivity: state?.canStartActivity ?? lobbyState.canStartActivity,
+                // canStartActivity: state?.canStartActivity ?? lobbyState.canStartActivity,
                 inChampSelect: champSelect.inChampSelect
               }
             ])
           )
+          break
+        }
+        case 'is-recording': {
+          ws.send(JSON.stringify(['is-recording', shouldRecord]))
           break
         }
       }
@@ -142,7 +148,7 @@ import { ChampionLookup } from './champion-lookup'
 const championLookup = new ChampionLookup()
 
 /// Champion Select Session
-import { ChampionSelect, LolChampSelectSession } from './champion-select'
+import { ChampionSelect } from './champion-select'
 const champSelect = new ChampionSelect({
   logger: champSelectLogger,
   championLookup,
@@ -152,6 +158,9 @@ const champSelect = new ChampionSelect({
   onUpdate: (session) => {
     if (shouldRecord) {
       recordingBuffer.push(session)
+      wss.clients.forEach((client) =>
+        client.send(JSON.stringify(['recording-size', recordingBuffer.length]))
+      )
     }
     wss.clients.forEach((client) => client.send(JSON.stringify(['champ-select', session])))
   }
@@ -297,6 +306,7 @@ app.on('window-all-closed', () => {
 /// IPC
 import { ipcMain } from 'electron'
 import { LobbyConfig, LobbyKind, lobbyConfig } from './lobby-config'
+import { ChampionSelectSession } from '@/types/champion-select'
 
 const cycleBrowserWindowSize = () => {
   let i = 0
@@ -350,27 +360,37 @@ ipcMain.on('preload-images', () => {
   wss.clients.forEach((c) => c.send(JSON.stringify(['preload-images', images])))
 })
 
-ipcMain.on('recording-controller', (_, action: 'enable' | 'disable' | 'save' | 'clear') => {
-  switch (action) {
-    case 'enable': {
-      mainLogger.info('enabled recording')
-      setShouldRecord(true)
-      break
+ipcMain.handle(
+  'recording-controller',
+  async (_, action: 'enable' | 'disable' | 'save' | 'clear' | 'is-recording') => {
+    switch (action) {
+      case 'is-recording': {
+        return shouldRecord
+      }
+      case 'enable': {
+        mainLogger.info('enabled recording')
+        setShouldRecord(true)
+        return shouldRecord
+      }
+      case 'disable': {
+        mainLogger.info('disabled recording')
+        setShouldRecord(false)
+        return shouldRecord
+      }
+      case 'clear': {
+        clearRecordingBuffer()
+        setShouldRecord(false)
+        return shouldRecord
+      }
+      case 'save': {
+        await saveRecordingBuffer()
+        return recordingBuffer.length
+      }
+      default: {
+        break
+      }
     }
-    case 'disable': {
-      mainLogger.info('disabled recording')
-      setShouldRecord(false)
-      break
-    }
-    case 'clear': {
-      clearRecordingBuffer()
-      break
-    }
-    case 'save': {
-      saveRecordingBuffer()
-    }
-    default: {
-      mainLogger.error(action, 'invalid recording action')
-    }
+    mainLogger.error(action, 'invalid recording action')
+    return shouldRecord
   }
-})
+)

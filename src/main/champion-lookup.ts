@@ -43,12 +43,13 @@ export class ChampionLookup extends LcuValue<Map<number, ChampionDto>> {
         async to(res) {
           return new Map(
             (await res).data.map(({ name, id }) => {
+              id = id || -1
               return [
                 id!,
                 {
                   championName: name!,
-                  championId: id!,
-                  splashImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id!}/${id!}000.jpg`,
+                  championId: id,
+                  splashImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-splashes/${id}/${id}000.jpg`,
                   squareImage: `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/${id}.png`
                 } satisfies ChampionDto
               ] as const
